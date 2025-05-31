@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <title>남문초 자유게시판</title>
+  <meta charset="UTF-8" />
+  <title>게시판</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -12,7 +12,10 @@
     h1 {
       color: #333;
     }
-    input[type="text"], textarea {
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    textarea {
       width: 100%;
       padding: 10px;
       margin-top: 5px;
@@ -20,6 +23,7 @@
       border: 1px solid #ccc;
       border-radius: 5px;
       font-size: 14px;
+      box-sizing: border-box;
     }
     button {
       padding: 10px 15px;
@@ -33,22 +37,12 @@
     button:hover {
       background-color: #0056b3;
     }
-    .small {
-      padding: 5px 10px;
-      font-size: 12px;
-    }
     .post {
       background: white;
       padding: 15px;
       margin-bottom: 20px;
       border-radius: 8px;
-      box-shadow: 0 0 5px rgba(0,0,0,0.1);
-    }
-    .comment-section {
-      margin-top: 10px;
-      background: #f9f9f9;
-      padding: 10px;
-      border-radius: 5px;
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
     }
     .comment {
       margin-top: 5px;
@@ -57,28 +51,57 @@
       border-radius: 5px;
       border: 1px solid #ddd;
     }
-    .comment .actions {
-      margin-top: 5px;
+    .comment-section {
+      margin-top: 10px;
+      background: #f9f9f9;
+      padding: 10px;
+      border-radius: 5px;
+    }
+    #postInputSection {
+      margin-top: 20px;
+      margin-bottom: 30px;
     }
   </style>
 </head>
 <body>
-  <h1>남문초 자유게시판</h1>
+  <h1>게시판</h1>
+  <div id="authSection">
+    <input type="email" id="email" placeholder="이메일" />
+    <input type="password" id="password" placeholder="비밀번호" />
+    <button id="loginBtn">로그인</button>
+    <button id="signupBtn">회원가입</button>
+  </div>
 
-  <div>
-    <input type="text" id="titleInput" placeholder="제목을 입력하세요">
-    <textarea id="contentInput" rows="4" placeholder="내용을 입력하세요"></textarea>
-    <button onclick="addPost()">글 작성</button>
+  <div id="postInputSection" style="display:none;">
+    <input type="text" id="titleInput" placeholder="제목" />
+    <textarea id="contentInput" rows="4" placeholder="내용"></textarea>
+    <button id="addPostBtn">글 작성</button>
+    <button id="logoutBtn" style="background-color: #dc3545;">로그아웃</button>
   </div>
 
   <div id="postList"></div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-app.js";
-    import { getDatabase, ref, push, onValue, remove, update } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-database.js";
-    import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-analytics.js";
+    import {
+      getDatabase,
+      ref,
+      push,
+      onValue,
+      remove,
+      update,
+      get,
+      child,
+    } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-database.js";
+    import {
+      getAuth,
+      createUserWithEmailAndPassword,
+      signInWithEmailAndPassword,
+      onAuthStateChanged,
+      signOut,
+    } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-auth.js";
 
-    const firebaseConfig = {
+    const app = initializeApp({
       apiKey: "AIzaSyAtfPeV-w16JGk-yZQGx1agsgdZQgJDU_4",
       authDomain: "miniwiki0265.firebaseapp.com",
       databaseURL: "https://miniwiki0265-default-rtdb.firebaseio.com",
@@ -86,165 +109,306 @@
       storageBucket: "miniwiki0265.appspot.com",
       messagingSenderId: "118700984871",
       appId: "1:118700984871:web:67c5c7cbe5aea771899c02",
-      measurementId: "G-2NRBG9X7NK"
+    });
+
+    const db = getDatabase(app);
+    const auth = getAuth();
+    let currentUser = null;
+
+    function maskEmail(email) {
+      const [local, domain] = email.split("@");
+      const maskedLocal =
+        local.length > 2 ? local.substring(0, 2) + "***" : local[0] + "***";
+      return `${maskedLocal}@${domain}`;
+    }
+
+    // 요소들
+    const authSection = document.getElementById("authSection");
+    const postInputSection = document.getElementById("postInputSection");
+    const postList = document.getElementById("postList");
+    const emailInput = document.getElementById("email");
+    const passwordInput = document.getElementById("password");
+    const titleInput = document.getElementById("titleInput");
+    const contentInput = document.getElementById("contentInput");
+    const loginBtn = document.getElementById("loginBtn");
+    const signupBtn = document.getElementById("signupBtn");
+    const addPostBtn = document.getElementById("addPostBtn");
+    const logoutBtn = document.getElementById("logoutBtn");
+
+    // 로그인 상태 변화 감지
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        currentUser = user;
+        authSection.style.display = "none";
+        postInputSection.style.display = "block";
+        loadPosts();
+      } else {
+        currentUser = null;
+        authSection.style.display = "block";
+        postInputSection.style.display = "none";
+        postList.innerHTML = "";
+      }
+    });
+
+    // 회원가입
+    signupBtn.onclick = () => {
+      const email = emailInput.value.trim();
+      const password = passwordInput.value.trim();
+      if (!email || !password) return alert("이메일과 비밀번호를 입력하세요.");
+      createUserWithEmailAndPassword(auth, email, password)
+        .then(() => {
+          alert("회원가입 완료");
+          emailInput.value = "";
+          passwordInput.value = "";
+        })
+        .catch((err) => alert(err.message));
     };
 
-    const app = initializeApp(firebaseConfig);
-    const analytics = getAnalytics(app);
-    const db = getDatabase(app);
-    const postListDiv = document.getElementById('postList');
+    // 로그인
+    loginBtn.onclick = () => {
+      const email = emailInput.value.trim();
+      const password = passwordInput.value.trim();
+      if (!email || !password) return alert("이메일과 비밀번호를 입력하세요.");
+      signInWithEmailAndPassword(auth, email, password).catch((err) =>
+        alert("로그인 실패: " + err.message)
+      );
+    };
 
-    function renderPost(key, postData) {
-      const postDiv = document.createElement('div');
-      postDiv.className = 'post';
-      postDiv.dataset.key = key;
+    // 로그아웃
+    logoutBtn.onclick = () => {
+      signOut(auth).catch((err) => alert("로그아웃 실패: " + err.message));
+    };
 
-      postDiv.innerHTML = `
-        <h3>${postData.title}</h3>
-        <p>${postData.content}</p>
-        <button class="small" onclick="editPostRealtime(this)">수정</button>
-        <button class="small" onclick="deletePostRealtime(this)">삭제</button>
-        <div class="comment-section">
-          <input type="text" placeholder="댓글 작성..." class="comment-input">
-          <button onclick="addCommentRealtime(this, '${key}')">댓글 올리기</button>
-          <div class="comment-list"></div>
-        </div>
-      `;
+    // 게시글 작성
+    addPostBtn.onclick = () => {
+      if (!currentUser) return alert("로그인이 필요합니다.");
+      const title = titleInput.value.trim();
+      const content = contentInput.value.trim();
+      if (!title || !content) return alert("제목과 내용을 입력하세요.");
 
-      postListDiv.prepend(postDiv);
-      loadComments(key, postDiv.querySelector('.comment-list'));
-    }
-
-    function loadPosts() {
-      const postsRef = ref(db, 'posts/');
-      onValue(postsRef, snapshot => {
-        postListDiv.innerHTML = '';
-        snapshot.forEach(childSnapshot => {
-          const key = childSnapshot.key;
-          const data = childSnapshot.val();
-          renderPost(key, data);
-        });
-      });
-    }
-
-    window.addPost = function () {
-      const title = document.getElementById('titleInput').value;
-      const content = document.getElementById('contentInput').value;
-
-      if (!title || !content) {
-        alert("제목과 내용을 모두 입력해주세요.");
-        return;
-      }
-
-      const postsRef = ref(db, 'posts/');
-      push(postsRef, {
+      push(ref(db, "posts"), {
         title,
-        content
+        content,
+        uid: currentUser.uid,
+        email: currentUser.email,
+        timestamp: Date.now(),
+      })
+        .then(() => {
+          titleInput.value = "";
+          contentInput.value = "";
+        })
+        .catch((err) => alert("글 작성 실패: " + err.message));
+    };
+
+    // 게시글 불러오기
+    function loadPosts() {
+      onValue(ref(db, "posts"), (snapshot) => {
+        const data = snapshot.val();
+        postList.innerHTML = "";
+        if (!data) return;
+
+        for (let id in data) {
+          const post = data[id];
+          const maskedEmail = maskEmail(post.email);
+
+          const div = document.createElement("div");
+          div.className = "post";
+
+          // 게시글 HTML 구성
+          div.innerHTML = `
+            <h3>${escapeHtml(post.title)}</h3>
+            <p>${escapeHtml(post.content).replace(/\n/g, "<br>")}</p>
+            <p><small>${maskedEmail}</small></p>
+            <div>
+              ${
+                post.uid === currentUser?.uid
+                  ? `<button class="editBtn" data-id="${id}">수정</button>
+                     <button class="deleteBtn" data-id="${id}">삭제</button>`
+                  : ""
+              }
+            </div>
+            <div class="comment-section">
+              <input type="text" id="commentInput-${id}" placeholder="댓글 작성" />
+              <button class="addCommentBtn" data-id="${id}">댓글 등록</button>
+              <div id="comments-${id}"></div>
+            </div>
+          `;
+          postList.appendChild(div);
+
+          // 댓글 불러오기
+          loadComments(id);
+        }
+
+        // 이벤트 위임 - 수정, 삭제, 댓글 등록 버튼들 처리
+        postList.querySelectorAll(".editBtn").forEach((btn) =>
+          btn.addEventListener("click", () => editPost(btn.dataset.id))
+        );
+        postList.querySelectorAll(".deleteBtn").forEach((btn) =>
+          btn.addEventListener("click", () => deletePost(btn.dataset.id))
+        );
+        postList.querySelectorAll(".addCommentBtn").forEach((btn) =>
+          btn.addEventListener("click", () => addComment(btn.dataset.id))
+        );
       });
-
-      document.getElementById('titleInput').value = '';
-      document.getElementById('contentInput').value = '';
     }
 
-    window.deletePostRealtime = function (btn) {
-      if (confirm('이 게시글을 삭제하시겠습니까?')) {
-        const postDiv = btn.closest('.post');
-        const postKey = postDiv.dataset.key;
-        remove(ref(db, `posts/${postKey}`));
-        remove(ref(db, `comments/${postKey}`));
-      }
+    // 게시글 수정
+    function editPost(id) {
+      if (!currentUser) return alert("로그인이 필요합니다.");
+
+      get(child(ref(db), `posts/${id}`))
+        .then((snapshot) => {
+          if (!snapshot.exists()) return alert("게시글을 찾을 수 없습니다.");
+
+          const post = snapshot.val();
+          if (post.uid !== currentUser.uid)
+            return alert("본인의 게시글만 수정할 수 있습니다.");
+
+          const newTitle = prompt("수정할 제목", post.title);
+          if (newTitle === null) return; // 취소
+          const newContent = prompt("수정할 내용", post.content);
+          if (newContent === null) return;
+
+          if (!newTitle.trim() || !newContent.trim())
+            return alert("제목과 내용을 비워둘 수 없습니다.");
+
+          update(ref(db, `posts/${id}`), {
+            title: newTitle.trim(),
+            content: newContent.trim(),
+          });
+        })
+        .catch((err) => alert("수정 실패: " + err.message));
     }
 
-    window.editPostRealtime = function (btn) {
-      const postDiv = btn.closest('.post');
-      const titleEl = postDiv.querySelector('h3');
-      const contentEl = postDiv.querySelector('p');
-      const postKey = postDiv.dataset.key;
+    // 게시글 삭제
+    function deletePost(id) {
+      if (!currentUser) return alert("로그인이 필요합니다.");
+      if (!confirm("정말 삭제하시겠습니까?")) return;
 
-      const isEditing = titleEl.isContentEditable;
+      get(child(ref(db), `posts/${id}`))
+        .then((snapshot) => {
+          if (!snapshot.exists()) return alert("게시글을 찾을 수 없습니다.");
 
-      if (isEditing) {
-        titleEl.contentEditable = 'false';
-        contentEl.contentEditable = 'false';
-        update(ref(db, `posts/${postKey}`), {
-          title: titleEl.textContent,
-          content: contentEl.textContent
-        });
-        btn.textContent = '수정';
-      } else {
-        titleEl.contentEditable = 'true';
-        contentEl.contentEditable = 'true';
-        btn.textContent = '저장';
-      }
+          const post = snapshot.val();
+          if (post.uid !== currentUser.uid)
+            return alert("본인의 게시글만 삭제할 수 있습니다.");
+
+          remove(ref(db, `posts/${id}`));
+          // 게시글 삭제 시 댓글도 같이 삭제 권장
+          remove(ref(db, `comments/${id}`));
+        })
+        .catch((err) => alert("삭제 실패: " + err.message));
     }
 
-    window.addCommentRealtime = function (btn, postKey) {
-      const commentInput = btn.previousElementSibling;
-      const commentText = commentInput.value.trim();
-      if (!commentText) {
-        alert("댓글을 입력해주세요.");
-        return;
-      }
-      const commentRef = ref(db, `comments/${postKey}`);
-      push(commentRef, {
-        text: commentText
-      });
-      commentInput.value = '';
+    // 댓글 추가
+    function addComment(postId) {
+      if (!currentUser) return alert("로그인이 필요합니다.");
+
+      const input = document.getElementById(`commentInput-${postId}`);
+      const text = input.value.trim();
+      if (!text) return alert("댓글 내용을 입력하세요.");
+
+      push(ref(db, `comments/${postId}`), {
+        text,
+        uid: currentUser.uid,
+        email: currentUser.email,
+        timestamp: Date.now(),
+      })
+        .then(() => {
+          input.value = "";
+        })
+        .catch((err) => alert("댓글 등록 실패: " + err.message));
     }
 
-    function loadComments(postKey, commentListDiv) {
-      const commentRef = ref(db, `comments/${postKey}`);
-      onValue(commentRef, snapshot => {
-        commentListDiv.innerHTML = '';
-        snapshot.forEach(childSnapshot => {
-          const commentKey = childSnapshot.key;
-          const data = childSnapshot.val();
+    // 댓글 불러오기
+    function loadComments(postId) {
+      const commentDiv = document.getElementById(`comments-${postId}`);
 
-          const commentDiv = document.createElement('div');
-          commentDiv.className = 'comment';
-          commentDiv.dataset.key = commentKey;
+      onValue(ref(db, `comments/${postId}`), (snapshot) => {
+        const data = snapshot.val();
+        commentDiv.innerHTML = "";
+        if (!data) return;
 
-          const span = document.createElement('span');
-          span.textContent = data.text;
-          span.setAttribute('contenteditable', 'false');
+        for (let cid in data) {
+          const c = data[cid];
+          const maskedEmail = maskEmail(c.email);
 
-          const actions = document.createElement('div');
-          actions.className = 'actions';
+          const div = document.createElement("div");
+          div.className = "comment";
 
-          const editBtn = document.createElement('button');
-          editBtn.textContent = '수정';
-          editBtn.onclick = () => {
-            const isEditing = span.getAttribute('contenteditable') === 'true';
-            if (isEditing) {
-              span.setAttribute('contenteditable', 'false');
-              editBtn.textContent = '수정';
-              update(ref(db, `comments/${postKey}/${commentKey}`), {
-                text: span.textContent
-              });
-            } else {
-              span.setAttribute('contenteditable', 'true');
-              editBtn.textContent = '저장';
+          div.innerHTML = `
+            <p>${escapeHtml(c.text)} <small>(${maskedEmail})</small></p>
+            ${
+              c.uid === currentUser?.uid
+                ? `<button class="deleteCommentBtn" data-postid="${postId}" data-cid="${cid}">삭제</button>`
+                : ""
             }
-          };
+          `;
+          commentDiv.appendChild(div);
+        }
 
-          const deleteBtn = document.createElement('button');
-          deleteBtn.textContent = '삭제';
-          deleteBtn.onclick = () => {
-            if (confirm('이 댓글을 삭제하시겠습니까?')) {
-              remove(ref(db, `comments/${postKey}/${commentKey}`));
-            }
-          };
-
-          actions.appendChild(editBtn);
-          actions.appendChild(deleteBtn);
-          commentDiv.appendChild(span);
-          commentDiv.appendChild(actions);
-          commentListDiv.appendChild(commentDiv);
-        });
+        // 댓글 삭제 버튼 이벤트 추가
+        commentDiv.querySelectorAll(".deleteCommentBtn").forEach((btn) =>
+          btn.addEventListener("click", () =>
+            deleteComment(btn.dataset.postid, btn.dataset.cid)
+          )
+        );
       });
     }
 
-    loadPosts();
+    // 댓글 삭제
+    function deleteComment(postId, commentId) {
+      if (!currentUser) return alert("로그인이 필요합니다.");
+
+      get(child(ref(db), `comments/${postId}/${commentId}`))
+        .then((snapshot) => {
+          if (!snapshot.exists()) return alert("댓글을 찾을 수 없습니다.");
+
+          const c = snapshot.val();
+          if (c.uid !== currentUser.uid)
+            return alert("본인의 댓글만 삭제할 수 있습니다.");
+
+          remove(ref(db, `comments/${postId}/${commentId}`));
+        })
+        .catch((err) => alert("댓글 삭제 실패: " + err.message));
+    }
+
+    // HTML 특수문자 이스케이프 함수
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    /*
+    보안 권장:
+    Firebase Realtime Database 규칙을 설정하여
+    - 게시글 작성자는 자신의 게시글만 수정/삭제 가능
+    - 댓글 작성자는 자신의 댓글만 삭제 가능
+    예)
+    {
+      "rules": {
+        "posts": {
+          "$postId": {
+            ".read": true,
+            ".write": "auth != null && ( !data.exists() || data.child('uid').val() == auth.uid )"
+          }
+        },
+        "comments": {
+          "$postId": {
+            "$commentId": {
+              ".read": true,
+              ".write": "auth != null && ( !data.exists() || data.child('uid').val() == auth.uid )"
+            }
+          }
+        }
+      }
+    }
+    */
+
   </script>
 </body>
 </html>
